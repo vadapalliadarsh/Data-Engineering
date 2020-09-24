@@ -1,0 +1,6 @@
+
+
++++++++++++++ Loading Pivot Data into MySQl +++++++++++++
+
+sqoop-export -Dmapreduce.job.running.map.limit=30 -Dsqoop.export.records.per.statement=5000 -Dsqoop.export.statements.per.transaction=100000 --num-mappers 2 --connect "jdbc:mysql://dbserver.edu.cloudlab.com/labuser_database" --table edureka_653389_pivot_table  --update-mode allowinsert --hcatalog-table pivot_table --hcatalog-database edureka_653389 --username edu_labuser --password edureka
+
