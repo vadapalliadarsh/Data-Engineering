@@ -1,0 +1,151 @@
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+mkdir pivot_table
+mkdir pivot_table/src
+mkdir pivot_table/src/main
+mkdir pivot_table/src/main/scala
+
+vi industry_grade_project/pivot_table/build.sbt
+
+vi build.sbt
+
+name         := "pivottable"
+version      := "1.0"
+organization := "edureka"
+scalaVersion := "2.11.8"
+val sparkVersion = "2.1.0"
+libraryDependencies += "org.apache.spark" %% "spark-core" % sparkVersion % "provided"
+libraryDependencies += "org.apache.spark" %% "spark-sql" % sparkVersion % "provided"
+libraryDependencies += "org.apache.spark" %% "spark-mllib" % sparkVersion % "provided"
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+vi src/main/scala/pivottable.scala
+
+#Create Spark Code Program:
+
+package com.src.main.pivottable
+
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types._
+import java.nio.file.{Paths, Files}
+import java.nio.file.{Paths, Files}
+import scala.reflect.io.Directory
+import java.io.File
+import readdata.ReadData.{readCase,readSurvey}
+
+
+object PivotTable {
+
+def main (args : Array[String]) : Unit = {
+
+val spark = get_spark_session("Fetch Data from Cassandra")
+
+val realCaseDF = readCase(spark)
+val realSurveyDF = readSurvey(spark)
+
+val caseDF = mergeCase(spark, realCaseDF)
+val surveyDF = mergeSurvey(spark, realSurveyDF)
+
+loadCase(caseDF)
+loadSurvey(surveyDF)
+
+val pivotDF = createPivotTable(spark)
+
+}
+
+
+def createPivotTable(spark : SparkSession) : DataFrame ={
+
+//-------------------------------- Cases --------------------------------
+
+val caseDF = spark.sql("select distinct case_no, create_timestamp, last_modified_timestamp, created_employee_key, call_center_id, status, category, sub_category, communication_mode, country_cd, product_code, row_insertion_dttm, create_date from edureka_653389.case_details")
+val caseCategoryDF = spark.sql("select distinct category_key, sub_category_key, priority from edureka_653389.futurecart_case_category_details")
+val casePriorityDF = spark.sql("select distinct priority, severity from edureka_653389.futurecart_case_priority_details")
+val joinDF = caseCategoryDF.join(casePriorityDF, caseCategoryDF("priority") === casePriorityDF("priority"), "inner")
+val joinDF1 = caseDF.join(joinDF, caseDF("category_key") === caseDF("category_key") && caseDF("sub_category_key") === caseDF("sub_category_key"), "inner")
+
+val caseCalendarDF = spark.sql("select distinct calendar_date, year_week_number, month_number, split(calendar_date,"-").getItem(1) as year from edureka_653389.futurecart_case_category_details")
+
+val resultDF = joinDF1.join(caseCalendarDF, joinDF1(split(col("create_timestamp")," ").getItem(1)) === caseCalendarDF("calendar_date"), "inner")
+
+val pivotCaseDF = caseDF.withColumn("total_cases", lit(caseDF.count())).withColumn("open_cases_in_hr", lit(caseDF.filter(trim(lower(col("status"))) === "open" && split(split(current_timestamp()," ").getItem(2),":").getItem(1) - 1 > split(split(col("create_timestamp")," ").getItem(2),":").getItem(1)).count())).withColumn("closed_cases_in_hr", lit(caseDF.filter(trim(lower(col("status"))) === "closed" && split(split(current_timestamp()," ").getItem(2),":").getItem(1) - 1 > split(split(col("create_timestamp")," ").getItem(2),":").getItem(1)).count())).withColumn("priority_cases",lit(resultDF.filter(upper(col("priority")) === "P1").count())).select(col("case_no"), col("total_cases"), col("open_cases_in_hr"), col("closed_cases_in_hr"), col("priority_cases"))
+
+//-------------------------------- Survey --------------------------------
+
+val surveytableDF = spark.sql("select distinct survey_id, case_no, survey_timestamp, q1, q2, q3, q4, q5, row_insertion_dttm, survey_date from edureka_653389.survey_details")
+val survey_question = spark.sql("select question_id, negative_response_range, positive_response_range from edureka_653389.futurecart_survey_question_details where question_id = 'q1'")
+val negmax = survey_question.split(col("negative_response_range"),"-").getItem(2).toInt()
+val posmin = survey_question.split(col("positive_response_range"),"-").getItem(1).toInt()
+val surveyDF = surveytableDF.withColumn("response", when(posmin > col("q1").toInt(), "positive").when(negmax < col("q1").toInt(), "negative").otherwise("NA")).select(col("survey_id"), col("case_no"), col("survey_timestamp"), col("response"))
+val pivotSurveyDF = surveyDF.join(caseCalendarDF, surveyDF(split(col("survey_timestamp")," ").getItem(1)) === caseCalendarDF("calendar_date"), "inner")
+
+//-------------------------------- Pivot --------------------------------
+
+val pivotDF = pivotCaseDF.join(pivotSurveyDF, pivotCaseDF("case_no") === pivotSurveyDF("case_no"), "inner").withColumn("response_in_hr", lit(split(split(current_timestamp()," ").getItem(2),":").getItem(1) - 1 > split(split(col("create_timestamp")," ").getItem(2),":").getItem(1)).count())).withColumn("positive_response_in_hr", lit(pivotSurveyDF.filter(trim(lower(col("response"))) === "positive" && split(split(current_timestamp()," ").getItem(2),":").getItem(1) - 1 > split(split(col("create_timestamp")," ").getItem(2),":").getItem(1)).count())).withColumn("negative_response_in_hr", lit(pivotSurveyDF.filter(trim(lower(col("response"))) === "negative" && split(split(current_timestamp()," ").getItem(2),":").getItem(1) - 1 > split(split(col("survey_timestamp")," ").getItem(2),":").getItem(1)).count())).select(col("total_cases"), col("open_cases_in_hr"), col("closed_cases_in_hr"), col("priority_cases"), col("response_in_hr"), col("positive_response_in_hr"), col("negative_response_in_hr"))
+
+return pivotDF
+}
+
+
+
+def get_spark_session(app_name : String) : SparkSession ={
+  val spark = SparkSession.builder().config("spark.cassandra.connection.host","cassandradb.edu.cloudlab.com").config("spark.cassandra.connection.port",9042).appName(app_name)
+  .enableHiveSupport().getOrCreate()
+spark.sqlContext.setConf("hive.exec.dynamic.partition", "true")
+spark.sqlContext.setConf("hive.exec.dynamic.partition.mode", "nonstrict")
+return spark
+}
+
+
+def mergeSurvey(spark : SparkSession, mergeDF : DataFrame) : DataFrame ={
+val batchSurveyDF = spark.sql("select * from edureka_653389.futurecart_case_survey_details")
+val surveyDF = mergeDF.union(batchSurveyDF).distinct()
+return surveyDF
+}
+
+
+def mergeCase(spark : SparkSession, mergeDF : DataFrame) : DataFrame ={
+val batchCaseDF = spark.sql("select * from edureka_653389.futurecart_case_details")
+val caseDF = mergeDF.union(batchCaseDF).distinct()
+return CaseDF
+}
+
+
+def loadSurvey(spark : SparkSession, loadDF : DataFrame) : Unit ={
+loadDF.createOrReplaceTempView("tableDF")
+spark.sql("insert into edureka_653389.survey_details partition (survey_date) select survey_id, case_no, survey_timestamp, q1, q2, q3, q4, q5, current_timestamp() as row_insertion_dttm, split(survey_timestamp, " ")[0] as survey_date from tableDF")
+val survey_details = spark.sql("select distinct survey_id, case_no, survey_timestamp, q1, q2, q3, q4, q5, row_insertion_dttm, survey_date from edureka_653389.survey_details")
+spark.sql("truncate table edureka_653389.survey_details")
+spark.sql("insert into edureka_653389.survey_details partition (survey_date) select survey_id, case_no, survey_timestamp, q1, q2, q3, q4, q5, row_insertion_dttm, survey_date from survey_details")
+}
+
+
+def loadCase(spark : SparkSession, loadDF : DataFrame) : Unit ={
+loadDF.createOrReplaceTempView("tableDF")
+spark.sql("insert into edureka_653389.case_details partition (create_date) select case_no, create_timestamp, last_modified_timestamp, created_employee_key, call_center_id, status, category, sub_category, communication_mode, country_cd, product_code, current_timestamp() as row_insertion_dttm, split(create_timestamp, " ")[0] as create_date from tableDF")
+val case_details = spark.sql("select distinct case_no, create_timestamp, last_modified_timestamp, created_employee_key, call_center_id, status, category, sub_category, communication_mode, country_cd, product_code, row_insertion_dttm, create_date from edureka_653389.case_details")
+spark.sql("truncate table edureka_653389.case_details")
+spark.sql("insert into edureka_653389.case_details partition (create_date) select case_no, create_timestamp, last_modified_timestamp, created_employee_key, call_center_id, status, category, sub_category, communication_mode, country_cd, product_code, row_insertion_dttm, create_date from case_details")
+}
+
+
+def loadPivot(spark : SparkSession, loadDF : DataFrame) : Unit ={
+loadDF.createOrReplaceTempView("tableDF")
+spark.sql("insert into edureka_653389.pivot_table partition (create_date) select total_cases, open_cases_in_hr, closed_cases_in_hr, priority_cases, response_in_hr, positive_response_in_hr, negative_response_in_hr, current_timestamp() as row_insertion_dttm, split(create_timestamp, " ")[0] as create_date from tableDF")
+val pivot_table = spark.sql("select distinct total_cases, open_cases_in_hr, closed_cases_in_hr, priority_cases, response_in_hr, positive_response_in_hr, negative_response_in_hr, row_insertion_dttm, create_date from edureka_653389.pivot_table")
+spark.sql("truncate table edureka_653389.pivot_table")
+spark.sql("insert into edureka_653389.pivot_table partition (create_date) select total_cases, open_cases_in_hr, closed_cases_in_hr, priority_cases, response_in_hr, positive_response_in_hr, negative_response_in_hr, row_insertion_dttm, create_date from pivot_table")
+}
+
+}
+
+
+sbt package
+spark2-submit --class com.src.main.pivottable.PivotTable --deploy-mode client target/scala-2.11/pivottable_2.11-1.0.jar
+
+
+
+
+
