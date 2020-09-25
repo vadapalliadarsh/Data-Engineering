@@ -142,10 +142,16 @@ spark.sql("insert into edureka_653389.pivot_table partition (create_date) select
 }
 
 
+/*
 sbt package
-spark2-submit --class com.src.main.pivottable.PivotTable --deploy-mode client target/scala-2.11/pivottable_2.11-1.0.jar
 
-
+spark2-submit --class com.src.main.pivottable.PivotTable \
+--packages com.datastax.spark:spark-cassandra-connector_2.11:2.0.12, org.apache.spark:spark-streaming-kafka-0-8_2.11:2.2.0, kafka-clients:0.8.2.2 \
+--conf spark.cassandra.auth.username=... \
+--conf spark.cassandra.auth.password=... \
+--deploy-mode client target/scala-2.11/pivottable_2.11-1.0.jar
+ */
+ 
 
 
 
