@@ -111,5 +111,12 @@ val caseStream = input_stream.map( x => x._2.toString()).foreachRDD( rdd => {
 }
 
 
+/*
 sbt package
-spark2-submit --class stream.RealTimeStream --deploy-mode client target/scala-2.11/stream_2.11-1.0.jar
+
+spark2-submit --class stream.RealTimeStream \
+--packages com.datastax.spark:spark-cassandra-connector_2.11:2.0.12, org.apache.spark:spark-streaming-kafka-0-8_2.11:2.2.0, kafka-clients:0.8.2.2 \
+--conf spark.cassandra.auth.username=... \
+--conf spark.cassandra.auth.password=... \
+--deploy-mode client target/scala-2.11/stream_2.11-1.0.jar
+ */
